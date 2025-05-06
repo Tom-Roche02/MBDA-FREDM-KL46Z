@@ -1,0 +1,66 @@
+#include "mbed.h"
+
+
+// SPI Pins: MISO, MOSI, SCK, CS
+SPI spi(PTA16, PTA17, PTA15);
+DigitalOut cs(PTA14); // Chip Select for SPI
+Serial pc(USBTX, USBRX, 115200); // Fast serial communication
+
+
+// Register Definitions
+#define READ_INT8(addr) (*(volatile uint8_t *)(addr))
+#define WRITE_INT8(addr, value) (*(volatile uint8_t *)(addr) = (value))
+#define READ_INT16(addr) (*(volatile uint16_t *)(addr))
+#define WRITE_INT16(addr, value) (*(volatile uint16_t *)(addr) = (value))
+
+
+#define SPI0_S  0x40076000  // SPI Status Register
+#define SPI0_C2 0x40076002  // SPI Control Register 2
+#define SPI0_DL 0x40076006  // SPI Data Low Register
+
+
+#define SAMPLE_COUNT 512 // Reduce for faster real-time data streaming
+
+
+int main() {
+    uint8_t buffer[SAMPLE_COUNT]; // Store only 8-bit values
+
+
+    spi.format(8, 0);       // 8-bit SPI mode
+    spi.frequency(8000000); // 8 MHz SPI clock for speed improvement
+
+
+    while (1) {  // Continuous loop for real-time data streaming
+        for (int i = 0; i < SAMPLE_COUNT; i++) {
+            cs = 0;  // Assert CS (Start communication)
+
+
+            // Read first 8 bits (Most Significant Byte - MSB)
+            WRITE_INT8(SPI0_DL, 0x00); // Dummy write
+            while (!(READ_INT8(SPI0_S) & 0x20));  // Wait for transmission
+            uint8_t msb = READ_INT8(SPI0_DL);  // Read first 8 bits
+
+
+        
+
+
+            // Read last 8 bits (Least Significant Byte - LSB)
+            WRITE_INT8(SPI0_DL, 0x00); // Dummy write
+            while (!(READ_INT8(SPI0_S) & 0x20));  
+            uint8_t lsb = READ_INT8(SPI0_DL); // Read last 8 bits
+
+
+            cs = 1;  // Deassert CS (Stop communication)
+
+
+            // Store only the **LSB** or **MSB** based on preference
+            buffer[i] = msb;  // Can change to `buffer[i] = msb;` if needed
+        }
+
+
+        // Send data over serial (MATLAB-compatible)
+        for (int i = 0; i < SAMPLE_COUNT; i++) {
+            pc.printf("%02X\n", buffer[i]);  // Print as 2-digit hex (8-bit)
+        }
+    }
+}
