@@ -1,0 +1,534 @@
+function batCallAnalyzerApp()
+    % Create the main figure window with black background - full screen
+    fig = figure('Name', 'Multi-node Bat Density Analyser User Interface', ...
+                 'Units', 'normalized', 'OuterPosition', [0 0 1 1], ...
+                 'MenuBar', 'none', 'ToolBar', 'none', 'NumberTitle', 'off', ...
+                 'Color', [0 0 0]);
+
+    % Default directory and parameters
+    defaultDir = 'D:\';
+    if ~exist(defaultDir, 'dir')
+        defaultDir = pwd;
+    end
+
+    % Configuration parameters
+    appData.window_size = 1024;
+    appData.overlap = 1000;
+    appData.nfft = 1024;
+    appData.currentFile = '';
+    appData.currentData = [];
+    appData.originalData = [];
+    appData.currentFs = 0;
+    appData.isPlaying = false;
+    appData.player = [];
+    appData.powerThreshold = 0.05; % Default spectral power density threshold
+    setappdata(fig, 'AppData', appData);
+
+    % Create a large, prominent title bar at the top
+    titlePanel = uipanel('Parent', fig, 'BackgroundColor', [0.05 0.05 0.2], ...
+                        'Position', [0 0.94 1 0.06], 'BorderType', 'none');
+    
+    % Add title text with larger size and better visibility
+    titleText = uicontrol('Parent', titlePanel, 'Style', 'text', ...
+                        'String', 'Multi-node Bat Density Analyser User Interface', ...
+                        'FontSize', 22, 'FontWeight', 'bold', ...
+                        'ForegroundColor', [1 1 1], 'BackgroundColor', [0.05 0.05 0.2], ...
+                        'Units', 'normalized', 'Position', [0.1 0.1 0.8 0.8], ...
+                        'HorizontalAlignment', 'center');
+
+    % Create panels with dark theme - adjusted positions to account for title bar
+    filePanel = uipanel(fig, 'Title', 'Bat Call Files', 'Position', [0.01 0.01 0.15 0.92], ...
+                       'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+                       'HighlightColor', [0.3 0.3 0.3], 'ShadowColor', [0.1 0.1 0.1], ...
+                       'TitlePosition', 'centertop', 'FontSize', 12, 'FontWeight', 'bold');
+    
+    plotPanel = uipanel(fig, 'Title', 'Spectrogram', 'Position', [0.17 0.15 0.82 0.78], ...
+                       'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+                       'HighlightColor', [0.3 0.3 0.3], 'ShadowColor', [0.1 0.1 0.1], ...
+                       'TitlePosition', 'centertop', 'FontSize', 12, 'FontWeight', 'bold');
+    
+    controlPanel = uipanel(fig, 'Title', 'Audio Controls', 'Position', [0.17 0.01 0.27 0.13], ...
+                          'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+                          'HighlightColor', [0.3 0.3 0.3], 'ShadowColor', [0.1 0.1 0.1], ...
+                          'TitlePosition', 'centertop', 'FontSize', 12, 'FontWeight', 'bold');
+    
+    processingPanel = uipanel(fig, 'Title', 'Signal Processing', 'Position', [0.45 0.01 0.54 0.13], ...
+                             'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+                             'HighlightColor', [0.3 0.3 0.3], 'ShadowColor', [0.1 0.1 0.1], ...
+                             'TitlePosition', 'centertop', 'FontSize', 12, 'FontWeight', 'bold');
+
+    % Directory selection group
+    dirGroup = uibuttongroup('Parent', filePanel, 'Title', 'Directory', ...
+        'Position', [0.05 0.87 0.9 0.11], 'BackgroundColor', [0.15 0.15 0.15], ...
+        'ForegroundColor', 'w', 'BorderType', 'line', 'HighlightColor', 'w', ...
+        'FontSize', 10);
+
+    % Directory path display field
+    dirEdit = uicontrol('Parent', dirGroup, 'Style', 'edit', ...
+        'Units', 'normalized', 'Position', [0.05 0.25 0.65 0.65], ...
+        'String', defaultDir, 'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', 'w', ...
+        'HorizontalAlignment', 'left', 'Callback', @onDirectoryChanged);
+
+    % Browse button
+    uicontrol('Parent', dirGroup, 'Style', 'pushbutton', ...
+        'Units', 'normalized', 'Position', [0.75 0.25 0.2 0.65], ...
+        'String', 'Browse', 'Callback', @onBrowseClicked, ...
+        'BackgroundColor', [0.3 0.3 0.3], 'ForegroundColor', 'w');
+
+    % File browser components with improved styling
+    fileBrowser = uicontrol(filePanel, 'Style', 'listbox', 'Units', 'normalized', ...
+                     'Position', [0.05 0.15 0.9 0.70], 'Callback', @onFileSelected, ...
+                     'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+                     'FontSize', 10);
+
+    % Refresh button
+    uicontrol(filePanel, 'Style', 'pushbutton', 'String', 'Refresh Files', ...
+                'Units', 'normalized', 'Position', [0.05 0.05 0.9 0.05], ...
+                'Callback', @onRefreshClicked, ...
+                'BackgroundColor', [0.3 0.3 0.3], 'ForegroundColor', [1 1 1], ...
+                'FontWeight', 'bold');
+
+    % Spectrogram display
+    ax = axes('Parent', plotPanel, 'Position', [0.08 0.08 0.9 0.85], ...
+             'Color', [0.15 0.15 0.15], 'XColor', [0.8 0.8 0.8], 'YColor', [0.8 0.8 0.8]);
+
+    % Audio control buttons - styled consistently
+    uicontrol(controlPanel, 'Style', 'pushbutton', 'String', '▶ Play (5x Slower)', ...
+              'FontSize', 10, 'Units', 'normalized', 'Position', [0.05 0.55 0.42 0.35], ...
+              'Callback', @(~,~)onPlayClicked(5), ...
+              'BackgroundColor', [0.2 0.3 0.5], 'ForegroundColor', [1 1 1], ...
+              'FontWeight', 'bold');
+
+    uicontrol(controlPanel, 'Style', 'pushbutton', 'String', '▶ Play (10x Slower)', ...
+              'FontSize', 10, 'Units', 'normalized', 'Position', [0.05 0.15 0.42 0.35], ...
+              'Callback', @(~,~)onPlayClicked(10), ...
+              'BackgroundColor', [0.2 0.3 0.5], 'ForegroundColor', [1 1 1], ...
+              'FontWeight', 'bold');
+
+    uicontrol(controlPanel, 'Style', 'pushbutton', 'String', '⏹ Stop', ...
+              'FontSize', 10, 'Units', 'normalized', 'Position', [0.52 0.35 0.2 0.35], ...
+              'Callback', @onStopClicked, ...
+              'BackgroundColor', [0.5 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+              'FontWeight', 'bold');
+
+    uicontrol(controlPanel, 'Style', 'pushbutton', 'String', '💾 Export WAV', ...
+              'FontSize', 10, 'Units', 'normalized', 'Position', [0.77 0.35 0.18 0.35], ...
+              'Callback', @onExportAudioClicked, ...
+              'BackgroundColor', [0.3 0.3 0.3], 'ForegroundColor', [1 1 1], ...
+              'FontWeight', 'bold');
+
+    % Signal processing parameters - with consistent styling
+    uicontrol(processingPanel, 'Style', 'text', 'String', 'Enhancement:', ...
+              'Units', 'normalized', 'Position', [0.02 0.7 0.15 0.25], ...
+              'HorizontalAlignment', 'left', ...
+              'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    filterMethodPopup = uicontrol(processingPanel, 'Style', 'popupmenu', ...
+              'String', {'Original', 'Enhanced'}, ...
+              'Units', 'normalized', 'Position', [0.18 0.7 0.15 0.25], ...
+              'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    uicontrol(processingPanel, 'Style', 'text', 'String', 'Freq Range (kHz):', ...
+              'Units', 'normalized', 'Position', [0.35 0.7 0.15 0.25], ...
+              'HorizontalAlignment', 'left', ...
+              'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    lowFreqEdit = uicontrol(processingPanel, 'Style', 'edit', 'String', '35', ...
+              'Units', 'normalized', 'Position', [0.51 0.7 0.07 0.25], ...
+              'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    highFreqEdit = uicontrol(processingPanel, 'Style', 'edit', 'String', '55', ...
+              'Units', 'normalized', 'Position', [0.59 0.7 0.07 0.25], ...
+              'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    % Power threshold
+    uicontrol(processingPanel, 'Style', 'text', 'String', 'Power Threshold:', ...
+              'Units', 'normalized', 'Position', [0.02 0.4 0.15 0.25], ...
+              'HorizontalAlignment', 'left', ...
+              'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    powerThresholdEdit = uicontrol(processingPanel, 'Style', 'edit', 'String', '0.05', ...
+              'Units', 'normalized', 'Position', [0.18 0.4 0.15 0.25], ...
+              'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    uicontrol(processingPanel, 'Style', 'pushbutton', 'String', 'Apply', ...
+              'FontSize', 10, 'Units', 'normalized', 'Position', [0.69 0.4 0.14 0.25], ...
+              'Callback', @onApplyProcessingClicked, ...
+              'BackgroundColor', [0.3 0.5 0.3], 'ForegroundColor', [1 1 1], ...
+              'FontWeight', 'bold');
+
+    uicontrol(processingPanel, 'Style', 'pushbutton', 'String', 'Export Spectrogram', ...
+              'FontSize', 10, 'Units', 'normalized', 'Position', [0.35 0.4 0.16 0.25], ...
+              'Callback', @onPopOutSpectrogramClicked, ...
+              'BackgroundColor', [0.3 0.3 0.3], 'ForegroundColor', [1 1 1], ...
+              'FontWeight', 'bold');
+
+    % Spectrogram color scale controls
+    uicontrol(processingPanel, 'Style', 'text', 'String', 'Color Min:', ...
+              'Units', 'normalized', 'Position', [0.69 0.7 0.09 0.25], ...
+              'HorizontalAlignment', 'left', ...
+              'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+    
+    colorMinEdit = uicontrol(processingPanel, 'Style', 'edit', 'String', '0', ...
+              'Units', 'normalized', 'Position', [0.79 0.7 0.06 0.25], ...
+              'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+
+    uicontrol(processingPanel, 'Style', 'text', 'String', 'Color Max:', ...
+              'Units', 'normalized', 'Position', [0.86 0.7 0.09 0.25], ...
+              'HorizontalAlignment', 'left', ...
+              'BackgroundColor', [0.1 0.1 0.1], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+    
+    colorMaxEdit = uicontrol(processingPanel, 'Style', 'edit', 'String', '1', ...
+              'Units', 'normalized', 'Position', [0.93 0.7 0.06 0.25], ...
+              'BackgroundColor', [0.2 0.2 0.2], 'ForegroundColor', [1 1 1], ...
+              'FontSize', 10);
+    
+    % Add record data button with high-visibility style
+    recordBtn = uicontrol(processingPanel, 'Style', 'pushbutton', 'String', 'Record New Data', ...
+              'FontSize', 12, 'Units', 'normalized', 'Position', [0.69 0.05 0.30 0.25], ...
+              'Callback', @onRecordDataClicked, ...
+              'BackgroundColor', [0.1 0.6 0.1], 'ForegroundColor', [1 1 1], ...
+              'FontWeight', 'bold');
+
+    % Store handles
+    handles.fileBrowser = fileBrowser;
+    handles.dirEdit = dirEdit;
+    handles.ax = ax;
+    handles.filterMethodPopup = filterMethodPopup;
+    handles.lowFreqEdit = lowFreqEdit;
+    handles.highFreqEdit = highFreqEdit;
+    handles.powerThresholdEdit = powerThresholdEdit;
+    handles.colorMinEdit = colorMinEdit;
+    handles.colorMaxEdit = colorMaxEdit;
+    
+    setappdata(fig, 'Handles', handles);
+
+    % Initialize file list
+    updateFileList(defaultDir);
+
+    function onFileSelected(~, ~)
+        handles = getappdata(fig, 'Handles');
+        fileList = get(handles.fileBrowser, 'String');
+        selectedIdx = get(handles.fileBrowser, 'Value');
+        if isempty(fileList) || selectedIdx < 1
+            return;
+        end
+        
+        directory = get(handles.dirEdit, 'String');
+        selectedFile = fileList{selectedIdx};
+        fullPath = fullfile(directory, selectedFile);
+        loadAndDisplayFile(fullPath);
+    end
+
+    function onDirectoryChanged(~, ~)
+        directory = get(dirEdit, 'String');
+        if exist(directory, 'dir')
+            updateFileList(directory);
+        else
+            warndlg(['Directory not found: ' directory], 'Invalid Directory');
+            set(dirEdit, 'String', defaultDir);
+            updateFileList(defaultDir);
+        end
+    end
+
+    function onBrowseClicked(~, ~)
+        directory = uigetdir(get(dirEdit, 'String'), 'Select Directory');
+        if directory ~= 0
+            set(dirEdit, 'String', directory);
+            updateFileList(directory);
+        end
+    end
+
+    function onRefreshClicked(~, ~)
+        directory = get(dirEdit, 'String');
+        updateFileList(directory);
+    end
+
+    function onPlayClicked(slowdownFactor)
+        appData = getappdata(fig, 'AppData');
+        if isempty(appData.currentData)
+            warndlg('Please select a file first.', 'No Data');
+            return;
+        end
+        onStopClicked();
+        signalToPlay = appData.currentData / (max(abs(appData.currentData)) + eps);
+        fs_play = round(appData.currentFs/slowdownFactor);
+        appData.player = audioplayer(signalToPlay, fs_play);
+        appData.isPlaying = true;
+        appData.player.StopFcn = @audioStopped;
+        play(appData.player);
+        setappdata(fig, 'AppData', appData);
+    end
+
+    function onStopClicked(~, ~)
+        appData = getappdata(fig, 'AppData');
+        if ~isempty(appData.player) && isplaying(appData.player)
+            stop(appData.player);
+        end
+        appData.isPlaying = false;
+        setappdata(fig, 'AppData', appData);
+    end
+
+    function onApplyProcessingClicked(~, ~)
+        handles = getappdata(fig, 'Handles');
+        appData = getappdata(fig, 'AppData');
+        if isempty(appData.originalData)
+            warndlg('Please load a file first.', 'No Data');
+            return;
+        end
+        
+        % Get parameters from UI
+        method = get(handles.filterMethodPopup, 'Value');
+        lowFreq = str2double(get(handles.lowFreqEdit, 'String')) * 1000;
+        highFreq = str2double(get(handles.highFreqEdit, 'String')) * 1000;
+        
+        % Get power threshold
+        powerThreshold = str2double(get(handles.powerThresholdEdit, 'String'));
+        if isnan(powerThreshold) || powerThreshold < 0 || powerThreshold > 1
+            warndlg('Power threshold should be between 0 and 1', 'Invalid Input');
+            set(handles.powerThresholdEdit, 'String', '0.05');
+            powerThreshold = 0.05;
+        end
+        appData.powerThreshold = powerThreshold;
+        setappdata(fig, 'AppData', appData);
+
+        % Process the data
+        data = appData.originalData;
+        fs = appData.currentFs;
+        if method == 1
+            processedData = data;
+        else
+            processedData = bandpassFilter(data, fs, lowFreq, highFreq);
+            processedData = reduceNoise(processedData, fs, appData);
+        end
+        
+        appData.currentData = processedData;
+        setappdata(fig, 'AppData', appData);
+        updateSpectrogram(processedData, fs, handles.ax, appData);
+    end
+
+    function onPopOutSpectrogramClicked(~, ~)
+        handles = getappdata(gcf, 'Handles');
+        appData = getappdata(gcf, 'AppData');
+
+        if isempty(appData.originalData)
+            warndlg('Please load a file first.', 'No Data');
+            return;
+        end
+
+        % Copy and apply all current settings
+        method = get(handles.filterMethodPopup, 'Value');
+        lowFreq = str2double(get(handles.lowFreqEdit, 'String')) * 1000;
+        highFreq = str2double(get(handles.highFreqEdit, 'String')) * 1000;
+
+        % Get power threshold
+        powerThreshold = str2double(get(handles.powerThresholdEdit, 'String'));
+        if isnan(powerThreshold) || powerThreshold < 0 || powerThreshold > 1
+            powerThreshold = 0.05;
+        end
+
+        % Update appData to reflect any changed threshold
+        appData.powerThreshold = powerThreshold;
+
+        % Process data as in the main viewer
+        data = appData.originalData;
+        fs = appData.currentFs;
+
+        if method == 2
+            data = bandpassFilter(data, fs, lowFreq, highFreq);
+            data = reduceNoise(data, fs, appData);
+        end
+
+        % Plot the processed spectrogram in a new figure
+        f = figure('Name', 'Spectrogram Export', 'NumberTitle', 'off', 'Color', [0 0 0]);
+        ax = axes('Parent', f, 'Color', [0.15 0.15 0.15], 'XColor', [0.8 0.8 0.8], 'YColor', [0.8 0.8 0.8]);
+        updateSpectrogram(data, fs, ax, appData);
+
+        % Apply color limits if valid
+        cmin = str2double(get(handles.colorMinEdit, 'String'));
+        cmax = str2double(get(handles.colorMaxEdit, 'String'));
+ if ~isnan(cmin) && ~isnan(cmax) && cmin < cmax
+    caxis(ax, [cmin cmax]);
+end
+
+        % Apply frequency range
+        ylim(ax, [lowFreq highFreq]/1000);
+    end
+
+    function onRecordDataClicked(~, ~)
+        try
+            % Run the field-testing file
+            run('Feild_testing_endclife.m');
+        catch ME
+            errordlg(['Error running feild_testing_endcliffe.m: ' ME.message], 'Launch Error');
+        end
+    end
+
+    function audioStopped(~, ~)
+        appData = getappdata(fig, 'AppData');
+        appData.isPlaying = false;
+        setappdata(fig, 'AppData', appData);
+    end
+
+    function onExportAudioClicked(~, ~)
+        appData = getappdata(gcf, 'AppData');
+        % Check if data is loaded
+        if isempty(appData.currentData)
+            warndlg('Please select and process a waveform before exporting.', 'No Data to Export');
+            return;
+        end
+
+        % Ask user for destination
+        [file, path] = uiputfile('*.wav', 'Save 5x Slowed-down Audio As');
+        if isequal(file,0)
+            return; % User cancelled
+        end
+        fullFilename = fullfile(path, file);
+
+        % Normalize audio to avoid clipping
+        audioToWrite = appData.currentData / (max(abs(appData.currentData)) + eps);
+
+        slowdownFactor = 5; % Always export the 5x slowed-down version!
+        fs_slow = round(appData.currentFs / slowdownFactor);
+
+        % If you must limit to 44.1kHz output, uncomment:
+        % fs_slow = 44100; audioToWrite = resample(audioToWrite, fs_slow, appData.currentFs / slowdownFactor);
+
+        try
+            audiowrite(fullFilename, audioToWrite, fs_slow);
+            msgbox('5x slowed-down audio exported successfully.', 'Export Complete');
+        catch ME
+            errordlg(['Failed to write audio file: ' ME.message], 'Export Error');
+        end
+    end
+end
+
+function updateFileList(directory)
+    fig = gcf;
+    handles = getappdata(fig, 'Handles');
+    if ~exist(directory, 'dir')
+        warndlg(['Directory not found: ' directory], 'Invalid Directory');
+        return;
+    end
+    files = dir(fullfile(directory, '*.mat'));
+    fileNames = {files.name};
+    set(handles.fileBrowser, 'String', fileNames);
+    if ~isempty(fileNames)
+        set(handles.fileBrowser, 'Value', 1);
+    end
+end
+
+function loadAndDisplayFile(filePath)
+    fig = gcf;
+    try
+        S = load(filePath);
+        if ~isfield(S, 'raw_snippet') || ~isfield(S, 'SAMPLE_RATE')
+            warndlg('Missing fields in file.', 'Invalid File');
+            return;
+        end
+        data = double(S.raw_snippet(:)) - mean(double(S.raw_snippet(:)));
+        fs = double(S.SAMPLE_RATE);
+        appData = getappdata(fig, 'AppData');
+        appData.currentFile = filePath;
+        appData.originalData = data;
+        appData.currentData = data;
+        appData.currentFs = fs;
+        setappdata(fig, 'AppData', appData);
+        handles = getappdata(fig, 'Handles');
+        updateSpectrogram(data, fs, handles.ax, appData);
+    catch e
+        errordlg(['Error loading file: ' e.message], 'File Error');
+    end
+end
+
+function updateSpectrogram(data, fs, ax, appData)
+    [s, f, t] = spectrogram(data, appData.window_size, appData.overlap, appData.nfft, fs, 'yaxis');
+    s_mag = abs(s) / max(abs(s(:)) + eps);
+    axes(ax);
+    cla(ax);
+    imagesc(ax, t, f/1000, s_mag);
+    axis(ax, 'xy');
+    colormap(ax, 'jet');
+    
+    % Apply color scale limits from UI
+    handles = getappdata(gcf, 'Handles');
+    try
+        cmin = str2double(get(handles.colorMinEdit, 'String'));
+        cmax = str2double(get(handles.colorMaxEdit, 'String'));
+        if ~isnan(cmin) && ~isnan(cmax) && cmin < cmax
+            caxis(ax, [cmin cmax]);
+        end
+    catch
+        % Ignore invalid inputs
+    end
+
+    % Make axis tick labels white and larger
+    set(ax, 'XColor', [1 1 1], 'YColor', [1 1 1], 'FontSize', 12, 'FontWeight', 'bold');
+
+    % Make x and y axis labels white and larger
+    xlabel(ax, 'Time (s)', 'Color', [1 1 1], 'FontSize', 14, 'FontWeight', 'bold');
+    ylabel(ax, 'Frequency (kHz)', 'Color', [1 1 1], 'FontSize', 14, 'FontWeight', 'bold');
+
+    % Make the colorbar labels white too
+    cb = colorbar(ax);
+    set(cb, 'Color', [1 1 1], 'FontSize', 12);
+    cb.Label.String = 'Power (dB)';
+    cb.Label.Color = [1 1 1];
+    cb.Label.FontSize = 14;
+end
+
+function filtered_data = bandpassFilter(data, fs, lowFreq, highFreq)
+    [b, a] = butter(4, [lowFreq, highFreq]/(fs/2), 'bandpass');
+    filtered_data = filtfilt(b, a, data);
+end
+
+function cleaned_data = reduceNoise(data, fs, appData)
+    % Calculate spectrogram
+    [S, ~, ~] = spectrogram(data, appData.window_size, appData.overlap, appData.nfft, fs);
+    P = abs(S).^2;
+
+    % Apply spectral power density threshold
+    threshold = appData.powerThreshold * max(P(:));
+    mask = P >= threshold;
+    S_filtered = S .* mask;
+
+    % Reconstruct time-domain signal
+    cleaned_data = istft(S_filtered, appData.window_size, appData.overlap, appData.nfft, fs);
+    cleaned_data = cleaned_data(1:min(end, length(data)));
+end
+
+function x = istft(X, window, noverlap, nfft, fs)
+    [~, num_frames] = size(X);
+    hop = window - noverlap;
+    x = zeros((num_frames-1)*hop + window, 1);
+    norm_window = zeros(size(x));
+    win = hann(window);
+    
+    for i = 1:num_frames
+        frame_spec = X(:, i);
+        if length(frame_spec) < nfft/2+1
+            frame_spec(end+1:nfft/2+1) = 0;
+        end
+        if nfft > 1
+            frame_spec = [frame_spec; conj(frame_spec(end-1:-1:2))];
+        end
+        frame = real(ifft(frame_spec, nfft));
+        frame = frame(1:window) .* win;
+        start_idx = (i-1)*hop + 1;
+        x(start_idx:start_idx+window-1) = x(start_idx:start_idx+window-1) + frame;
+        norm_window(start_idx:start_idx+window-1) = norm_window(start_idx:start_idx+window-1) + win;
+    end
+    
+    idx = norm_window > 1e-10;
+    x(idx) = x(idx) ./ norm_window(idx);
+end
